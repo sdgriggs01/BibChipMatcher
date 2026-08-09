@@ -588,11 +588,11 @@ def parse_args() -> argparse.Namespace:
         description='Assign bib numbers to chips and generate HyTek E records for team entries.',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument('--chip-map', default='chipLabel_chipID_map.txt', help='CSV file mapping chip label to chip ID')
+    parser.add_argument('--chip-map', default='input/chipLabel_chipID_map.txt', help='CSV file mapping chip label to chip ID')
     parser.add_argument('--sheet-id', required=True, help='Google spreadsheet ID or URL')
     parser.add_argument('--sheet-gid', help='Optional Google sheet gid to select a specific worksheet')
     parser.add_argument('--teams', help='Comma-separated list of participating team names, in assignment order')
-    parser.add_argument('--team-list-file', help='Optional file containing participating team names, one per line')
+    parser.add_argument('--team-list-file', default='input/teams.txt', help='Optional file containing participating team names, one per line')
     parser.add_argument('--output-dir', default='output', help='Directory for generated output files')
     parser.add_argument('--output-prefix', default='meet', help='Output file prefix')
     parser.add_argument('--event-code', required=True, help='HyTek event code for the meet (for example 5000 or XC5K)')

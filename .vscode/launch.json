@@ -11,7 +11,7 @@
         "--sheet-id",
         "1Q8pEsPonUOy5raCcaGxX2Y_NwDcJ8LaXgWDebFgGCnM",
         "--team-list-file",
-        "teams.txt",
+        "input/teams.txt",
         "--output-prefix",
         "TESTMEET_",
         "--event-code",

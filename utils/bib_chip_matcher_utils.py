@@ -1,18 +1,11 @@
-﻿#!/usr/bin/env python3
-"""Bib chip matcher for HyTek entry generation.
-
-This module assigns athlete bib numbers to timing chip labels and IDs, reads
-team rosters from a Google Sheets XLSX export, and writes HyTek-formatted
-entry records plus printable team assignment sheets.
-"""
+#!/usr/bin/env python3
+"""Utility functions for the Bib chip matcher CLI."""
 
 from __future__ import annotations
 
-import argparse
 import csv
 import io
 import re
-import sys
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,17 +20,39 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import PageBreak, SimpleDocTemplate, Spacer, Table, TableStyle, Paragraph
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 @dataclass
 class Chip:
+    """Represents a single timing chip label-to-ID mapping.
+
+    Attributes:
+        label (str): The chip label used in the assignment process.
+        chip_id (str): The identifier associated with the chip label.
+    """
+
     label: str
     chip_id: str
 
 
 @dataclass
 class Athlete:
+    """Represents an athlete loaded from a roster source.
+
+    Attributes:
+        first_name (str): Athlete's first name.
+        last_name (str): Athlete's last name.
+        gender (str): Gender value as supplied by the roster.
+        competitor_number (str): Bib number or competitor number.
+        team_name (str): Team name associated with the athlete.
+        team_code (Optional[str]): Optional team code from the roster.
+        birth_date (Optional[str]): Optional birth date string.
+        school_year (Optional[str]): Optional school year or grade string.
+        initial (Optional[str]): Optional middle initial.
+        extra (Dict[str, str]): Additional roster columns not otherwise modeled.
+    """
+
     first_name: str
     last_name: str
     gender: str
@@ -52,6 +67,24 @@ class Athlete:
 
 @dataclass
 class AssignedAthlete:
+    """Represents an athlete after a chip has been assigned.
+
+    Attributes:
+        first_name (str): Athlete's first name.
+        last_name (str): Athlete's last name.
+        gender (str): Gender value as supplied by the roster.
+        competitor_number (str): Bib number or competitor number.
+        team_name (str): Team name associated with the athlete.
+        team_code (Optional[str]): Optional team code from the roster.
+        birth_date (Optional[str]): Optional birth date string.
+        school_year (Optional[str]): Optional school year or grade string.
+        initial (Optional[str]): Optional middle initial.
+        extra (Dict[str, str]): Additional roster columns not otherwise modeled.
+        chip_label (str): The assigned chip label.
+        chip_id (str): The assigned chip ID.
+        chip_index (int): One-based index of the assignment order.
+    """
+
     first_name: str
     last_name: str
     gender: str
@@ -70,12 +103,20 @@ class AssignedAthlete:
 def parse_chip_map(path: Path) -> List[Chip]:
     """Load chip label-to-chip ID mappings from a CSV file.
 
-    Parameters:
-        path: Path to a CSV file with headers where one column contains chip
-            labels and another contains chip IDs.
+    Args:
+        path (Path): Path to a CSV file containing chip label/chip ID rows.
+            The file must include a header row; if the headers contain ``num`` and
+            ``tag`` then those columns are used, otherwise the first two columns
+            are used.
 
     Returns:
-        A list of Chip objects representing label to ID mappings.
+        List[Chip]: A list of Chip objects for every non-empty row with a label
+            and chip ID.
+
+    Assumptions:
+        The file is UTF-8 encoded and comma-delimited. Rows with blank labels or
+        chip IDs are ignored, and at least one valid mapping row must exist or a
+        ValueError is raised.
     """
     with path.open(newline='', encoding='utf-8-sig') as handle:
         reader = csv.DictReader(handle)
@@ -103,7 +144,16 @@ def parse_chip_map(path: Path) -> List[Chip]:
 
 
 def make_candidate_names() -> Dict[str, Tuple[str, ...]]:
-    """Return common header name variants for roster fields."""
+    """Return common header name variants for roster fields.
+
+    Returns:
+        Dict[str, Tuple[str, ...]]: A mapping of logical field names, such as
+            ``team_name`` and ``competitor_number``, to accepted header aliases.
+
+    Assumptions:
+        Header matching is case-insensitive and whitespace-insensitive against
+        the raw roster column names.
+    """
     return {
         'team_name': ('team', 'team name', 'team_name', 'teamname', 'club', 'school'),
         'team_code': ('team code', 'team_code', 'teamcode', 'code'),
@@ -118,7 +168,20 @@ def make_candidate_names() -> Dict[str, Tuple[str, ...]]:
 
 
 def normalize_cell_value(value: Any) -> str:
-    """Normalize a cell value from pandas or CSV into a string."""
+    """Normalize a cell value from pandas or CSV into a string.
+
+    Args:
+        value (Any): A value extracted from a pandas DataFrame, CSV row, or other
+            Python object.
+
+    Returns:
+        str: A stripped string representation of the value. Whole-number floats
+            are converted to their integer string form.
+
+    Assumptions:
+        ``None`` is treated as an empty string, and surrounding whitespace is
+        removed from string values.
+    """
     if value is None:
         return ''
     if isinstance(value, float) and value.is_integer():
@@ -129,12 +192,18 @@ def normalize_cell_value(value: Any) -> str:
 def field_for_row(row: Dict[str, Any], candidates: Sequence[str]) -> Optional[str]:
     """Find a matching value from a row using candidate header names.
 
-    Parameters:
-        row: A mapping of header names to raw values.
-        candidates: A sequence of possible header names for a single field.
+    Args:
+        row (Dict[str, Any]): A mapping of column/header names to cell values.
+        candidates (Sequence[str]): Candidate header names to match, in priority
+            order.
 
     Returns:
-        The normalized string value for the first matching header or None.
+        Optional[str]: The normalized value from the first matching header, or
+            ``None`` if no candidate matches.
+
+    Assumptions:
+        Matching is case-insensitive and whitespace-insensitive, and the row may
+        contain string-like or non-string keys.
     """
     for candidate in candidates:
         for key in row.keys():
@@ -148,11 +217,17 @@ def field_for_row(row: Dict[str, Any], candidates: Sequence[str]) -> Optional[st
 def read_roster_csv(path: Path) -> List[Athlete]:
     """Read athlete roster records from a local CSV file.
 
-    Parameters:
-        path: Path to a CSV roster file with headers.
+    Args:
+        path (Path): Path to a CSV roster file with a header row.
 
     Returns:
-        A list of Athlete objects parsed from the file.
+        List[Athlete]: Athletes parsed from the file.
+
+    Assumptions:
+        The file contains headers for team, first/last name, and competitor
+        number, with optional gender, birth date, school year, initial, and team
+        code columns. Rows missing both first and last names are skipped, and
+        rows missing a competitor number raise a ValueError.
     """
     with path.open(newline='', encoding='utf-8-sig') as handle:
         reader = csv.DictReader(handle)
@@ -197,11 +272,16 @@ def read_roster_csv(path: Path) -> List[Athlete]:
 def parse_google_sheet_id(spreadsheet_url_or_id: str) -> str:
     """Extract the Google Sheets document ID from a URL or accept a raw ID.
 
-    Parameters:
-        spreadsheet_url_or_id: A Google Sheets URL or raw document ID.
+    Args:
+        spreadsheet_url_or_id (str): A Google Sheets URL or a raw spreadsheet ID.
 
     Returns:
-        The extracted spreadsheet ID.
+        str: The extracted document ID when a URL is provided; otherwise the
+            trimmed raw input.
+
+    Assumptions:
+        The function recognizes Google Sheets URLs that use the ``/d/<id>``
+        pattern. Other strings are passed through unchanged after trimming.
     """
     parsed = urlparse(spreadsheet_url_or_id)
     if parsed.netloc.endswith('docs.google.com'):
@@ -214,12 +294,18 @@ def parse_google_sheet_id(spreadsheet_url_or_id: str) -> str:
 def download_google_sheet_xlsx(spreadsheet_id: str, sheet_gid: Optional[str] = None) -> Dict[str, pd.DataFrame]:
     """Download a Google Sheet XLSX export and parse it into DataFrames.
 
-    Parameters:
-        spreadsheet_id: Google Sheets document ID.
-        sheet_gid: Optional gid for a specific worksheet.
+    Args:
+        spreadsheet_id (str): The Google Sheets document ID to export.
+        sheet_gid (Optional[str]): Optional worksheet ID used to target a
+            specific sheet within the workbook.
 
     Returns:
-        A dictionary of sheet name to pandas DataFrame.
+        Dict[str, pd.DataFrame]: A mapping of sheet names to pandas DataFrames.
+
+    Assumptions:
+        The spreadsheet is publicly accessible and the export endpoint can be
+        reached over the network. A ValueError is raised if the download or
+        XLSX parsing fails.
     """
     export_url = f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx'
     if sheet_gid:
@@ -239,13 +325,20 @@ def download_google_sheet_xlsx(spreadsheet_id: str, sheet_gid: Optional[str] = N
 def read_roster_from_google_sheet(spreadsheet_id_or_url: str, sheet_gid: Optional[str] = None, selected_teams: Optional[List[str]] = None) -> List[Athlete]:
     """Read athlete roster records from a Google Sheet.
 
-    Parameters:
-        spreadsheet_id_or_url: Google Sheets URL or document ID.
-        sheet_gid: Optional gid for a single sheet within the workbook.
-        selected_teams: Optional list of normalized team names to filter.
+    Args:
+        spreadsheet_id_or_url (str): A Google Sheets document ID or URL.
+        sheet_gid (Optional[str]): Optional worksheet ID for a single sheet.
+        selected_teams (Optional[List[str]]): Optional team names to filter the
+            roster to before parsing.
 
     Returns:
-        A list of Athlete objects parsed from the selected sheet(s).
+        List[Athlete]: Athletes parsed from the requested worksheet(s).
+
+    Assumptions:
+        The workbook is expected to follow the existing layout: row 3 contains
+        headers, row 0/1 contain the team name/code, and athlete data begins on
+        row 4. Team filtering is normalized using the title-cased team name, and
+        missing competitor numbers raise a ValueError.
     """
     spreadsheet_id = parse_google_sheet_id(spreadsheet_id_or_url)
     sheets = download_google_sheet_xlsx(spreadsheet_id, sheet_gid)
@@ -336,17 +429,53 @@ def read_roster_from_google_sheet(spreadsheet_id_or_url: str, sheet_gid: Optiona
 
 
 def normalize_team_name(name: str) -> str:
-    """Normalize a team name for matching and ordering."""
+    """Normalize a team name for matching and ordering.
+
+    Args:
+        name (str): The raw team name to normalize.
+
+    Returns:
+        str: A title-cased team name with collapsed internal whitespace.
+
+    Assumptions:
+        Leading and trailing whitespace is removed, and multiple consecutive
+        whitespace characters are collapsed to single spaces.
+    """
     return re.sub(r'\s+', ' ', name.strip()).title()
 
 
 def slugify(text: str) -> str:
-    """Convert a string into a filesystem-safe slug."""
+    """Convert a string into a filesystem-safe slug.
+
+    Args:
+        text (str): The source string to transform.
+
+    Returns:
+        str: A lowercase slug composed of letters, numbers, and underscores.
+
+    Assumptions:
+        Any non-alphanumeric sequence is replaced with an underscore, surrounding
+        underscores are trimmed, and an empty result falls back to ``team``.
+    """
     return re.sub(r'[^A-Za-z0-9]+', '_', text.strip()).strip('_').lower() or 'team'
 
 
 def group_athletes_by_team(athletes: Iterable[Athlete], team_order: Optional[List[str]] = None) -> List[Tuple[str, List[Athlete]]]:
-    """Group athletes by normalized team name, preserving optional order."""
+    """Group athletes by normalized team name, preserving optional order.
+
+    Args:
+        athletes (Iterable[Athlete]): Athlete records to group.
+        team_order (Optional[List[str]]): Optional team names that define the
+            preferred ordering of the groups.
+
+    Returns:
+        List[Tuple[str, List[Athlete]]]: A list of ``(team_name, athletes)``
+            pairs ordered by the requested team order when provided.
+
+    Assumptions:
+        Team matching uses normalized team names, and any teams not named in
+        ``team_order`` are appended afterward in insertion order.
+    """
     grouped: Dict[str, List[Athlete]] = OrderedDict()
     normalized_order = [normalize_team_name(name) for name in team_order] if team_order else []
 
@@ -367,7 +496,23 @@ def group_athletes_by_team(athletes: Iterable[Athlete], team_order: Optional[Lis
 
 
 def assign_chips_to_athletes(athletes: List[Athlete], chips: List[Chip], team_order: Optional[List[str]] = None) -> List[AssignedAthlete]:
-    """Assign chip labels and IDs to athletes in team order."""
+    """Assign chip labels and IDs to athletes in team order.
+
+    Args:
+        athletes (List[Athlete]): Athletes to assign chips to.
+        chips (List[Chip]): Available chip mappings in assignment order.
+        team_order (Optional[List[str]]): Optional team names that define the
+            ordering of the athlete assignment sequence.
+
+    Returns:
+        List[AssignedAthlete]: Assigned athlete records containing chip label,
+            chip ID, and chip index information.
+
+    Assumptions:
+        The number of athletes must not exceed the number of available chips, or
+        a ValueError is raised. Assignment proceeds in the grouped team order
+        and consumes chips sequentially.
+    """
     grouped = group_athletes_by_team(athletes, team_order)
     total_count = sum(len(team_athletes) for _, team_athletes in grouped)
     if total_count > len(chips):
@@ -400,15 +545,38 @@ def assign_chips_to_athletes(athletes: List[Athlete], chips: List[Chip], team_or
 
 
 def format_team_code(team_name: str) -> str:
-    """Convert a team name into a 4-character HyTek team code."""
+    """Convert a team name into a 4-character HyTek team code.
+
+    Args:
+        team_name (str): The human-readable team name.
+
+    Returns:
+        str: A four-character uppercase code derived from alphanumeric characters
+            in the team name, or ``UNA`` when no usable characters remain.
+
+    Assumptions:
+        Non-alphanumeric characters are removed before truncation, and only the
+        first four characters are preserved.
+    """
     cleaned = re.sub(r'[^A-Za-z0-9]', '', team_name.upper())
     return cleaned[:4] if cleaned else 'UNA'
 
 
 def format_hytek_e_record(athlete: AssignedAthlete, event_code: str, event_measure: str) -> str:
-    """Render an athlete as a HyTek D record line."""
-    # D;Doe;John;;M;;HURR;Hurricane High School;;11;3000;14:32.79;M;1;581;
+    """Render an athlete as a HyTek D record line.
 
+    Args:
+        athlete (AssignedAthlete): The assigned athlete to serialize.
+        event_code (str): HyTek event code for the entry.
+        event_measure (str): HyTek measure code such as ``M`` or ``E``.
+
+    Returns:
+        str: A semicolon-delimited HyTek-style record string.
+
+    Assumptions:
+        The output format mirrors the project's current HyTek record shape and
+        uses empty strings for fields that are not populated by the input data.
+    """
     team_code = athlete.team_code or ''
     fields = [
         'D',
@@ -432,7 +600,20 @@ def format_hytek_e_record(athlete: AssignedAthlete, event_code: str, event_measu
 
 
 def write_tag_file(path: Path, assigned: List[AssignedAthlete]) -> None:
-    """Write the bib number to chip ID mapping as plain text."""
+    """Write the bib number to chip ID mapping as plain text.
+
+    Args:
+        path (Path): Destination file path for the CSV mapping output.
+        assigned (List[AssignedAthlete]): Assigned athlete records containing the
+            bib number and chip ID values.
+
+    Returns:
+        None: The file is written to disk.
+
+    Assumptions:
+        The output file is created with comma delimiters and a header row of
+        ``Bib Number`` and ``Chip ID``.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle, delimiter=',')
@@ -442,7 +623,21 @@ def write_tag_file(path: Path, assigned: List[AssignedAthlete]) -> None:
 
 
 def write_hytek_entries(path: Path, assigned: List[AssignedAthlete], event_code: str, event_measure: str) -> None:
-    """Write HyTek E record entries to the specified output file."""
+    """Write HyTek E record entries to the specified output file.
+
+    Args:
+        path (Path): Destination file path for the HyTek entry output.
+        assigned (List[AssignedAthlete]): Assigned athlete records to serialize.
+        event_code (str): HyTek event code for each entry.
+        event_measure (str): HyTek measure code such as ``M`` or ``E``.
+
+    Returns:
+        None: The output file is written to disk.
+
+    Assumptions:
+        Athletes with both first and last names blank are skipped. The output is
+        written with Windows-style ``\r\n`` line endings.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     def name_is_blank(value: str) -> bool:
@@ -456,7 +651,23 @@ def write_hytek_entries(path: Path, assigned: List[AssignedAthlete], event_code:
 
 
 def write_printable_sheets(output_dir: Path, assigned: List[AssignedAthlete], event_code: str) -> None:
-    """Write printable assignment sheets for each team and one combined file."""
+    """Write printable assignment sheets for each team and one combined file.
+
+    Args:
+        output_dir (Path): Directory where the text and PDF assignment files are
+            written.
+        assigned (List[AssignedAthlete]): Assigned athlete records to include in
+            the printable sheets.
+        event_code (str): Event identifier shown in the generated sheets.
+
+    Returns:
+        None: The output files are written to disk.
+
+    Assumptions:
+        Athletes with both first and last names blank are excluded. Team files are
+        named using a slugified team name, and a PDF summary is generated in the
+        same directory.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     def name_is_blank(value: str) -> bool:
@@ -571,7 +782,22 @@ def write_printable_sheets(output_dir: Path, assigned: List[AssignedAthlete], ev
 
 
 def compile_team_list(team_csv: Optional[str], selected_teams: Optional[str]) -> Optional[List[str]]:
-    """Compile a team list from an inline string or a line-separated file."""
+    """Compile a team list from an inline string or a line-separated file.
+
+    Args:
+        team_csv (Optional[str]): Optional path to a text file containing team
+            names, one per line.
+        selected_teams (Optional[str]): Optional comma-separated list of team
+            names supplied directly by the caller.
+
+    Returns:
+        Optional[List[str]]: A list of trimmed team names when either input is
+            provided; otherwise ``None``.
+
+    Assumptions:
+        Inline team names take precedence over the file input. Empty entries are
+        ignored, and a missing team list file raises FileNotFoundError.
+    """
     if selected_teams:
         return [team.strip() for team in selected_teams.split(',') if team.strip()]
     if team_csv:
@@ -581,59 +807,3 @@ def compile_team_list(team_csv: Optional[str], selected_teams: Optional[str]) ->
         with path.open(newline='', encoding='utf-8-sig') as handle:
             return [line.strip() for line in handle if line.strip()]
     return None
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description='Assign bib numbers to chips and generate HyTek E records for team entries.',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument('--chip-map', default='input/chipLabel_chipID_map.txt', help='CSV file mapping chip label to chip ID')
-    parser.add_argument('--sheet-id', required=True, help='Google spreadsheet ID or URL')
-    parser.add_argument('--sheet-gid', help='Optional Google sheet gid to select a specific worksheet')
-    parser.add_argument('--teams', help='Comma-separated list of participating team names, in assignment order')
-    parser.add_argument('--team-list-file', default='input/teams.txt', help='Optional file containing participating team names, one per line')
-    parser.add_argument('--output-dir', default='output', help='Directory for generated output files')
-    parser.add_argument('--output-prefix', default='meet', help='Output file prefix')
-    parser.add_argument('--event-code', required=True, help='HyTek event code for the meet (for example 5000 or XC5K)')
-    parser.add_argument('--event-measure', default='M', choices=['M', 'E'], help='HyTek event measure code')
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
-    chip_path = Path(args.chip_map)
-    if not chip_path.exists():
-        print(f'Error: chip map file not found: {chip_path}', file=sys.stderr)
-        return 1
-
-    chips = parse_chip_map(chip_path)
-    teams = compile_team_list(args.team_list_file, args.teams)
-
-    athletes = read_roster_from_google_sheet(args.sheet_id, args.sheet_gid, teams)
-
-    if teams:
-        selected_normalized = {normalize_team_name(t) for t in teams}
-        athletes = [ath for ath in athletes if normalize_team_name(ath.team_name) in selected_normalized]
-        if not athletes:
-            print('Error: no athletes remain after filtering with the selected teams.', file=sys.stderr)
-            return 1
-
-    assigned = assign_chips_to_athletes(athletes, chips, teams)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    tag_output = output_dir / f'{args.output_prefix}_tag_assignments.txt'
-    hytek_output = output_dir / f'{args.output_prefix}_hytek_entries.txt'
-    write_tag_file(tag_output, assigned)
-    write_hytek_entries(hytek_output, assigned, args.event_code, args.event_measure)
-    write_printable_sheets(output_dir, assigned, args.event_code)
-
-    print(f'Wrote {tag_output}')
-    print(f'Wrote {hytek_output}')
-    print(f'Wrote printable team sheets to {output_dir}')
-    return 0
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())

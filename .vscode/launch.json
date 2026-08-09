@@ -5,7 +5,7 @@
       "name": "Debug bib_chip_matcher.py",
       "type": "python",
       "request": "launch",
-      "program": "${workspaceFolder}/bib_chip_matcher.py",
+      "program": "${workspaceFolder}/gui.py",
       "console": "integratedTerminal",
       "args": [
         "--sheet-id",
@@ -17,6 +17,15 @@
         "--event-code",
         "5000"
       ]
+    },
+    {
+      "name": "Python: GUI",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/gui.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
     }
   ]
 }

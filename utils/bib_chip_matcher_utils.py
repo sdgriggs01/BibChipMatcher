@@ -444,6 +444,47 @@ def normalize_team_name(name: str) -> str:
     return re.sub(r'\s+', ' ', name.strip()).title()
 
 
+def extract_team_names_from_sheets(sheets: Dict[str, pd.DataFrame]) -> List[str]:
+    """Extract unique team names from spreadsheet sheets.
+
+    Args:
+        sheets (Dict[str, pd.DataFrame]): Spreadsheet sheets parsed from a Google
+            Sheets export.
+
+    Returns:
+        List[str]: Unique team names discovered from the sheets, preserving the
+            first-seen order.
+
+    Assumptions:
+        Each sheet is expected to contain the team name in row 0/1 of the first
+        column/second column. Empty or missing team names are ignored.
+    """
+    teams: List[str] = []
+    seen: set[str] = set()
+    for _, df in sheets.items():
+        if df.empty or len(df) < 2:
+            continue
+
+        df = df.where(pd.notna(df), None)
+        if df.shape[1] > 1:
+            team_name = normalize_cell_value(df.iat[0, 1])
+        else:
+            team_name = normalize_cell_value(df.iat[0, 0])
+
+        if not team_name:
+            continue
+
+        normalized = normalize_team_name(team_name)
+        if normalized.lower() in {'hello! welcome to the 2026 xc season bib sheet', 'day', 'monday', 'nan', 'none', 'n/a', 'na'}:
+            continue
+
+        if normalized not in seen:
+            seen.add(normalized)
+            teams.append(normalized)
+
+    return teams
+
+
 def slugify(text: str) -> str:
     """Convert a string into a filesystem-safe slug.
 

@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug bib_chip_matcher.py",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/bib_chip_matcher.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--sheet-id",
+        "1Q8pEsPonUOy5raCcaGxX2Y_NwDcJ8LaXgWDebFgGCnM",
+        "--team-list-file",
+        "teams.txt",
+        "--output-prefix",
+        "TESTMEET_",
+        "--event-code",
+        "5000"
+      ]
+    }
+  ]
+}

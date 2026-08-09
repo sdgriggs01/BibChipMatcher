@@ -1,18 +1,11 @@
-﻿#!/usr/bin/env python3
-"""Bib chip matcher for HyTek entry generation.
-
-This module assigns athlete bib numbers to timing chip labels and IDs, reads
-team rosters from a Google Sheets XLSX export, and writes HyTek-formatted
-entry records plus printable team assignment sheets.
-"""
+#!/usr/bin/env python3
+"""Utility functions for the Bib chip matcher CLI."""
 
 from __future__ import annotations
 
-import argparse
 import csv
 import io
 import re
-import sys
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -27,7 +20,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import PageBreak, SimpleDocTemplate, Spacer, Table, TableStyle, Paragraph
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 
 @dataclass
@@ -68,15 +61,7 @@ class AssignedAthlete:
 
 
 def parse_chip_map(path: Path) -> List[Chip]:
-    """Load chip label-to-chip ID mappings from a CSV file.
-
-    Parameters:
-        path: Path to a CSV file with headers where one column contains chip
-            labels and another contains chip IDs.
-
-    Returns:
-        A list of Chip objects representing label to ID mappings.
-    """
+    """Load chip label-to-chip ID mappings from a CSV file."""
     with path.open(newline='', encoding='utf-8-sig') as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
@@ -127,15 +112,7 @@ def normalize_cell_value(value: Any) -> str:
 
 
 def field_for_row(row: Dict[str, Any], candidates: Sequence[str]) -> Optional[str]:
-    """Find a matching value from a row using candidate header names.
-
-    Parameters:
-        row: A mapping of header names to raw values.
-        candidates: A sequence of possible header names for a single field.
-
-    Returns:
-        The normalized string value for the first matching header or None.
-    """
+    """Find a matching value from a row using candidate header names."""
     for candidate in candidates:
         for key in row.keys():
             if key is None:
@@ -146,14 +123,7 @@ def field_for_row(row: Dict[str, Any], candidates: Sequence[str]) -> Optional[st
 
 
 def read_roster_csv(path: Path) -> List[Athlete]:
-    """Read athlete roster records from a local CSV file.
-
-    Parameters:
-        path: Path to a CSV roster file with headers.
-
-    Returns:
-        A list of Athlete objects parsed from the file.
-    """
+    """Read athlete roster records from a local CSV file."""
     with path.open(newline='', encoding='utf-8-sig') as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames:
@@ -195,14 +165,7 @@ def read_roster_csv(path: Path) -> List[Athlete]:
 
 
 def parse_google_sheet_id(spreadsheet_url_or_id: str) -> str:
-    """Extract the Google Sheets document ID from a URL or accept a raw ID.
-
-    Parameters:
-        spreadsheet_url_or_id: A Google Sheets URL or raw document ID.
-
-    Returns:
-        The extracted spreadsheet ID.
-    """
+    """Extract the Google Sheets document ID from a URL or accept a raw ID."""
     parsed = urlparse(spreadsheet_url_or_id)
     if parsed.netloc.endswith('docs.google.com'):
         match = re.search(r'/d/([^/]+)', parsed.path)
@@ -212,15 +175,7 @@ def parse_google_sheet_id(spreadsheet_url_or_id: str) -> str:
 
 
 def download_google_sheet_xlsx(spreadsheet_id: str, sheet_gid: Optional[str] = None) -> Dict[str, pd.DataFrame]:
-    """Download a Google Sheet XLSX export and parse it into DataFrames.
-
-    Parameters:
-        spreadsheet_id: Google Sheets document ID.
-        sheet_gid: Optional gid for a specific worksheet.
-
-    Returns:
-        A dictionary of sheet name to pandas DataFrame.
-    """
+    """Download a Google Sheet XLSX export and parse it into DataFrames."""
     export_url = f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=xlsx'
     if sheet_gid:
         export_url += f'&gid={sheet_gid}'
@@ -237,16 +192,7 @@ def download_google_sheet_xlsx(spreadsheet_id: str, sheet_gid: Optional[str] = N
 
 
 def read_roster_from_google_sheet(spreadsheet_id_or_url: str, sheet_gid: Optional[str] = None, selected_teams: Optional[List[str]] = None) -> List[Athlete]:
-    """Read athlete roster records from a Google Sheet.
-
-    Parameters:
-        spreadsheet_id_or_url: Google Sheets URL or document ID.
-        sheet_gid: Optional gid for a single sheet within the workbook.
-        selected_teams: Optional list of normalized team names to filter.
-
-    Returns:
-        A list of Athlete objects parsed from the selected sheet(s).
-    """
+    """Read athlete roster records from a Google Sheet."""
     spreadsheet_id = parse_google_sheet_id(spreadsheet_id_or_url)
     sheets = download_google_sheet_xlsx(spreadsheet_id, sheet_gid)
 
@@ -407,8 +353,6 @@ def format_team_code(team_name: str) -> str:
 
 def format_hytek_e_record(athlete: AssignedAthlete, event_code: str, event_measure: str) -> str:
     """Render an athlete as a HyTek D record line."""
-    # D;Doe;John;;M;;HURR;Hurricane High School;;11;3000;14:32.79;M;1;581;
-
     team_code = athlete.team_code or ''
     fields = [
         'D',
@@ -581,59 +525,3 @@ def compile_team_list(team_csv: Optional[str], selected_teams: Optional[str]) ->
         with path.open(newline='', encoding='utf-8-sig') as handle:
             return [line.strip() for line in handle if line.strip()]
     return None
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description='Assign bib numbers to chips and generate HyTek E records for team entries.',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument('--chip-map', default='input/chipLabel_chipID_map.txt', help='CSV file mapping chip label to chip ID')
-    parser.add_argument('--sheet-id', required=True, help='Google spreadsheet ID or URL')
-    parser.add_argument('--sheet-gid', help='Optional Google sheet gid to select a specific worksheet')
-    parser.add_argument('--teams', help='Comma-separated list of participating team names, in assignment order')
-    parser.add_argument('--team-list-file', default='input/teams.txt', help='Optional file containing participating team names, one per line')
-    parser.add_argument('--output-dir', default='output', help='Directory for generated output files')
-    parser.add_argument('--output-prefix', default='meet', help='Output file prefix')
-    parser.add_argument('--event-code', required=True, help='HyTek event code for the meet (for example 5000 or XC5K)')
-    parser.add_argument('--event-measure', default='M', choices=['M', 'E'], help='HyTek event measure code')
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
-    chip_path = Path(args.chip_map)
-    if not chip_path.exists():
-        print(f'Error: chip map file not found: {chip_path}', file=sys.stderr)
-        return 1
-
-    chips = parse_chip_map(chip_path)
-    teams = compile_team_list(args.team_list_file, args.teams)
-
-    athletes = read_roster_from_google_sheet(args.sheet_id, args.sheet_gid, teams)
-
-    if teams:
-        selected_normalized = {normalize_team_name(t) for t in teams}
-        athletes = [ath for ath in athletes if normalize_team_name(ath.team_name) in selected_normalized]
-        if not athletes:
-            print('Error: no athletes remain after filtering with the selected teams.', file=sys.stderr)
-            return 1
-
-    assigned = assign_chips_to_athletes(athletes, chips, teams)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    tag_output = output_dir / f'{args.output_prefix}_tag_assignments.txt'
-    hytek_output = output_dir / f'{args.output_prefix}_hytek_entries.txt'
-    write_tag_file(tag_output, assigned)
-    write_hytek_entries(hytek_output, assigned, args.event_code, args.event_measure)
-    write_printable_sheets(output_dir, assigned, args.event_code)
-
-    print(f'Wrote {tag_output}')
-    print(f'Wrote {hytek_output}')
-    print(f'Wrote printable team sheets to {output_dir}')
-    return 0
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())

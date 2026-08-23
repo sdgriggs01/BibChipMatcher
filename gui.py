@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import threading
 import tkinter as tk
@@ -14,6 +13,7 @@ from typing import Optional
 
 from cli import build_parser, run_pipeline
 from utils.bib_chip_matcher_utils import extract_team_names_from_sheets, parse_google_sheet_id
+from utils.gui_support import build_cli_args, build_settings_payload, read_settings_cache, write_settings_cache
 
 
 class BibChipMatcherGUI(tk.Tk):
@@ -126,31 +126,23 @@ class BibChipMatcherGUI(tk.Tk):
         return Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming')) / 'BibChipMatcher'
 
     def _cache_settings(self) -> None:
-        cache_dir = self._app_data_dir()
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        settings = {
-            'sheet-id': self.entries['sheet-id'].get().strip(),
-            'chip-map': self.entries['chip-map'].get().strip(),
-            'sheet-gid': self.entries['sheet-gid'].get().strip(),
-            'output-dir': self.entries['output-dir'].get().strip(),
-            'output-prefix': self.entries['output-prefix'].get().strip(),
-            'event-code': self.event_code_var.get().strip(),
-            'event-measure': self.var_measure.get().strip(),
-            'selected-teams': self._selected_team_names(),
-        }
-
-        cache_path = cache_dir / 'settings.json'
-        cache_path.write_text(json.dumps(settings, indent=2), encoding='utf-8')
+        cache_path = self._app_data_dir() / 'settings.json'
+        settings = build_settings_payload(
+            sheet_id=self.entries['sheet-id'].get(),
+            chip_map=self.entries['chip-map'].get(),
+            sheet_gid=self.entries['sheet-gid'].get(),
+            output_dir=self.entries['output-dir'].get(),
+            output_prefix=self.entries['output-prefix'].get(),
+            event_code=self.event_code_var.get(),
+            event_measure=self.var_measure.get(),
+            selected_teams=self._selected_team_names(),
+        )
+        write_settings_cache(cache_path, settings)
 
     def _restore_saved_settings(self) -> None:
         cache_path = self._app_data_dir() / 'settings.json'
-        if not cache_path.exists():
-            return
-
-        try:
-            settings = json.loads(cache_path.read_text(encoding='utf-8'))
-        except Exception:
+        settings = read_settings_cache(cache_path)
+        if not settings:
             return
 
         if 'sheet-id' in settings and settings['sheet-id']:
@@ -376,25 +368,20 @@ class BibChipMatcherGUI(tk.Tk):
     def _collect_args(self) -> Optional[argparse.Namespace]:
         parser = build_parser()
         selected_teams = self._selected_team_names()
-        teams_value = ','.join(selected_teams)
         if not selected_teams:
             messagebox.showerror('Missing teams', 'Select at least one team from the Teams box.')
             return None
 
-        values = {
-            '--chip-map': self.entries['chip-map'].get().strip(),
-            '--sheet-id': self.entries['sheet-id'].get().strip(),
-            '--sheet-gid': self.entries['sheet-gid'].get().strip(),
-            '--teams': teams_value,
-            '--output-dir': self.entries['output-dir'].get().strip(),
-            '--output-prefix': self.entries['output-prefix'].get().strip(),
-            '--event-code': self.event_code_var.get().strip(),
-            '--event-measure': self.var_measure.get().strip(),
-        }
-        args: list[str] = []
-        for key, value in values.items():
-            if value:
-                args.extend([key, value])
+        args = build_cli_args(
+            chip_map=self.entries['chip-map'].get().strip(),
+            sheet_id=self.entries['sheet-id'].get().strip(),
+            sheet_gid=self.entries['sheet-gid'].get().strip(),
+            teams=','.join(selected_teams),
+            output_dir=self.entries['output-dir'].get().strip(),
+            output_prefix=self.entries['output-prefix'].get().strip(),
+            event_code=self.event_code_var.get().strip(),
+            event_measure=self.var_measure.get().strip(),
+        )
         try:
             return parser.parse_args(args)
         except SystemExit:

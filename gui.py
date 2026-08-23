@@ -5,15 +5,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Optional
 
 from cli import build_parser, run_pipeline
 from utils.bib_chip_matcher_utils import extract_team_names_from_sheets, parse_google_sheet_id
 from utils.gui_support import build_cli_args, build_settings_payload, read_settings_cache, write_settings_cache
+from utils.version import __version__
+
+PROJECT_URL = 'https://github.com/sdgriggs01/BibChipMatcher'
+
+
+def resource_path(relative: str) -> Path:
+    """Resolve a bundled resource path for both source and frozen (PyInstaller) runs."""
+    base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
+    return base / relative
 
 
 class BibChipMatcherGUI(tk.Tk):
@@ -25,9 +35,44 @@ class BibChipMatcherGUI(tk.Tk):
         self.geometry('720x520')
         self.minsize(680, 480)
 
+        self._build_menu()
         self._build_ui()
         self.sheet_id_var.trace_add('write', self._on_sheet_id_change)
         self._restore_saved_settings()
+
+    def _build_menu(self) -> None:
+        menubar = tk.Menu(self)
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label='User Guide', command=self._show_user_guide)
+        help_menu.add_separator()
+        help_menu.add_command(label='About', command=self._show_about)
+        menubar.add_cascade(label='Help', menu=help_menu)
+        self.config(menu=menubar)
+
+    def _show_user_guide(self) -> None:
+        guide_path = resource_path('docs/userGuide.md')
+        try:
+            text = guide_path.read_text(encoding='utf-8')
+        except OSError as exc:
+            messagebox.showerror('User Guide', f'Unable to open the user guide: {exc}')
+            return
+
+        window = tk.Toplevel(self)
+        window.title('Bib Chip Matcher - User Guide')
+        window.geometry('720x600')
+        text_widget = scrolledtext.ScrolledText(window, wrap='word', font=('Segoe UI', 10))
+        text_widget.pack(fill='both', expand=True, padx=8, pady=8)
+        text_widget.insert('1.0', text)
+        text_widget.configure(state='disabled')
+
+    def _show_about(self) -> None:
+        messagebox.showinfo(
+            'About Bib Chip Matcher',
+            f'Bib Chip Matcher {__version__}\n\n'
+            "Assigns timing chips to cross-country athletes from a team roster "
+            "spreadsheet and generates HyTek entries.\n\n"
+            f'{PROJECT_URL}',
+        )
 
     def _build_ui(self) -> None:
         container = ttk.Frame(self, padding=16)

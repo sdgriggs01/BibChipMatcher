@@ -13,7 +13,9 @@ a = Analysis(
     [os.path.join(SPECPATH, "entrypoint.py")],
     pathex=[project_root],
     binaries=[],
-    datas=[],
+    datas=[
+        (os.path.join(project_root, "docs", "userGuide.md"), "docs"),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -34,6 +36,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon=os.path.join(SPECPATH, "icon.ico"),
 )
 
 coll = COLLECT(

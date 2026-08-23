@@ -1,8 +1,9 @@
 [project]
 name = "bibchipmatcher"
-version = "0.1.0"
+version = "1.0.0"
 description = "Assigns timing chips to cross-country athletes from a team roster spreadsheet and generates HyTek entries."
 requires-python = ">=3.11"
+license = { file = "LICENSE" }
 dependencies = [
     "pandas",
     "requests",

@@ -30,6 +30,7 @@ PrivilegesRequired=lowest
 OutputDir=..\build\installer
 OutputBaseFilename=BibChipMatcherSetup
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=icon.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

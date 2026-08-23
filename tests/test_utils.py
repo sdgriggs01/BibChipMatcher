@@ -72,6 +72,22 @@ class BibChipMatcherUtilsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_chip_map(path)
 
+    def test_parse_chip_map_raises_when_file_has_only_one_column(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'chip_map.csv'
+            path.write_text('num\nA\nB\n', encoding='utf-8')
+            with self.assertRaises(ValueError):
+                parse_chip_map(path)
+
+    def test_parse_chip_map_keeps_duplicate_labels_and_ids_as_separate_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'chip_map.csv'
+            path.write_text('num,tag\nA,111\nA,111\nB,222\n', encoding='utf-8')
+            chips = parse_chip_map(path)
+
+        # parse_chip_map performs no de-duplication; every non-empty row is kept.
+        self.assertEqual(chips, [Chip(label='A', chip_id='111'), Chip(label='A', chip_id='111'), Chip(label='B', chip_id='222')])
+
     def test_read_roster_csv_parses_expected_columns_and_extra_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / 'roster.csv'
@@ -189,6 +205,41 @@ class BibChipMatcherUtilsTests(unittest.TestCase):
         record = format_hytek_e_record(athlete, 'XC5K', 'M')
         self.assertTrue(record.startswith('D;Doe;John;A;M;2005-05-05;GRN;Green Team;;12;XC5K;'))
         self.assertIn(';99;', record)
+
+    def test_format_hytek_e_record_leaves_blank_fields_empty_when_optional_data_missing(self) -> None:
+        athlete = AssignedAthlete(
+            first_name='John',
+            last_name='Doe',
+            gender='',
+            competitor_number='5',
+            team_name='Red',
+            chip_label='X',
+            chip_id='1',
+        )
+        record = format_hytek_e_record(athlete, 'XC5K', 'M')
+        fields = record.split(';')
+        self.assertEqual(len(fields), 16)
+        self.assertEqual(fields, ['D', 'Doe', 'John', '', '', '', '', 'Red', '', '', 'XC5K', '', 'M', '', '5', ''])
+
+    def test_format_hytek_e_record_does_not_escape_semicolons_in_name_fields(self) -> None:
+        # A semicolon inside a name shifts every subsequent field, since the
+        # record is joined with ';' and no escaping/quoting is applied.
+        athlete = AssignedAthlete(
+            first_name='Jo;Ann',
+            last_name='Doe',
+            gender='F',
+            competitor_number='5',
+            team_name='Red',
+            chip_label='X',
+            chip_id='1',
+        )
+        record = format_hytek_e_record(athlete, 'XC5K', 'M')
+        fields = record.split(';')
+        self.assertEqual(len(fields), 17)
+        # The semicolon in the first name pushed every later field one slot to
+        # the right, so competitor_number ('5') lands at index 15 instead of 14.
+        self.assertEqual(fields[2:4], ['Jo', 'Ann'])
+        self.assertEqual(fields[15], '5')
 
     def test_write_tag_file_hytek_entries_and_printable_sheets(self) -> None:
         assigned = [

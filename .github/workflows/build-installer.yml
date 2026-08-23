@@ -1,0 +1,61 @@
+name: Build installer
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project + build tooling
+        run: pip install -e ".[build]"
+
+      - name: Read version from pyproject.toml
+        id: version
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build frozen app with PyInstaller
+        run: pyinstaller packaging/bibchipmatcher.spec --distpath build/dist --workpath build/work --noconfirm
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=${{ steps.version.outputs.version }}" packaging\installer.iss
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BibChipMatcherSetup-${{ steps.version.outputs.version }}
+          path: build/installer/BibChipMatcherSetup.exe
+          if-no-files-found: error
+
+      - name: Move 'latest' tag to this commit
+        run: |
+          git tag -f latest
+          git push origin latest --force
+
+      - name: Publish rolling 'latest' build
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest build (v${{ steps.version.outputs.version }})"
+          body: |
+            Automatically built from [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) on master. This release is updated on every push to master.
+          make_latest: false
+          files: build/installer/BibChipMatcherSetup.exe
